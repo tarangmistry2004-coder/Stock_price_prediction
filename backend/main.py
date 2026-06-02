@@ -5,7 +5,7 @@ from models.XGBoostmodel import XGBoostModel
 from models.Prophetmodel import ProphetModel
 from models.LSTM_clf import LSTM_CLFmodel
 from models.XGBoost_clf import XGBoost_CLFModel
-from models.TFT import TFTmodel
+from models.TFT import TFTQuantModel
 from models.catmodel import CatBoostModel
 from models.LightGBMmodel import LightGBMModel
 
@@ -37,9 +37,20 @@ regression_ds = get_stock_data('reliance.ns','max')
 
 # corr = regression_ds.corr(numeric_only=True).round(2)
 # plt.figure(figsize=(20,20))
-# sn.heatmap(corr,annot=True,cmap='coolwarm')
-# plt.show()
+# # sn.heatmap(corr,annot=True,cmap='coolwarm')
 
+# corr = (regression_ds.select_dtypes(include=["number"])
+#       .corr()["target"]
+#       .drop("target")
+#       .sort_values(key=abs, ascending=False)
+# )
+
+# corr.head(30).sort_values().plot(kind="barh")
+
+# plt.title("Top 30 Feature Correlations With Target")
+# plt.xlabel("Correlation")
+# plt.tight_layout()
+# plt.show()
 
 # classification_train_set  = classification_ds.iloc[ : int(len(classification_ds) * 0.8)] 
 # classification_test_set = classification_ds.iloc[int(len(classification_ds) * 0.8) : ]
@@ -69,7 +80,6 @@ model2.train(regression_train_Set)
 xgb_pred_regression = model2.predict(regression_test_Set)
 model2.forecast(regression_ds)
 
-
 cat_boost.train(regression_train_Set)
 cat_reg_pred = cat_boost.predict(regression_test_Set)
 cat_boost.forecast(regression_ds)
@@ -77,6 +87,11 @@ cat_boost.forecast(regression_ds)
 light_gbm.train(regression_train_Set)
 lightgbm_reg_pred = light_gbm.predict(regression_test_Set)
 light_gbm.forecast(regression_ds)
+
+# tft_model = TFTQuantModel()
+# tft_model.train(train_df=regression_train_Set)
+# tft_reg_pred =  tft_model.predict(test_df = regression_test_Set)
+# tft_model.forecast(regression_test_Set)
 
 # run_production_backtest(xgb_pred_regression,regression_test_Set,cash=10000)
 
@@ -86,9 +101,3 @@ light_gbm.forecast(regression_ds)
 # xgb_clf_model.train(classification_train_set)
 # xgb_clf_model.predict(classification_test_set)
 # xgb_clf_model.forecast(classification_ds)
-
-# tft_model = TFTmodel()
-# tft_model.train(df=regression_train_Set)
-# tft_model.predict(df = regression_test_Set)
-
-

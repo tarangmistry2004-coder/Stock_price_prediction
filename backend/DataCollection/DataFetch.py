@@ -7,9 +7,9 @@ from typing import List, Dict
 from bs4 import BeautifulSoup
 import feedparser
 
-from ta.momentum import RSIIndicator
-from ta.trend import MACD
-from ta.volatility import BollingerBands, AverageTrueRange
+from ta.momentum import RSIIndicator , StochasticOscillator 
+from ta.trend import MACD , ADXIndicator 
+from ta.volatility import BollingerBands, AverageTrueRange 
 
 from transformers import pipeline
 
@@ -111,6 +111,14 @@ def _add_technical_data(df: pd.DataFrame, nifty_close: pd.Series) -> pd.DataFram
 
     # Calendar 
     # data['day_of_week'] = data.index.dayofweek.astype(float)   # 0=Mon, 4=Fri
+
+    _adx_obj = ADXIndicator(high, low, close, window=14)
+    data["ADX"] = _adx_obj.adx()
+    data["ADX_slope"] = data["ADX"].diff(3)
+
+    _stoch_obj = StochasticOscillator(high, low, close, window=14, smooth_window=3)
+    data["Stochastic_K"] = _stoch_obj.stoch()
+    data["Stochastic_D"] = _stoch_obj.stoch_signal()
 
     return data
 
@@ -333,7 +341,6 @@ def get_stock_data(stock: str, period: str , for_clf : bool = False) -> pd.DataF
             'vol_down_confirm', 
             # 'Return_1d',   
         ]
-
 
         if for_clf:
              # target (classification)  

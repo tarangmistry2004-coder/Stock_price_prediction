@@ -30,6 +30,10 @@ class LightGBMModel:
             "vol_stretch",
             "lag1_return",
             "lag2_return",
+            'ADX' ,
+            'ADX_slope',
+            'Stochastic_K',
+            'Stochastic_D'  
         ]
         for col in immediate_cols:
             if col in df_features.columns:
@@ -48,18 +52,71 @@ class LightGBMModel:
 
         aggregated_features["target"] = df_features[self.target_col]
         aggregated_features["target_vol"] = df_features["target_vol"]
+        aggregated_features["nifty_ret"] = df_features["nifty_ret"] if "nifty_ret" in df_features.columns else 0.0
         aggregated_features.dropna(inplace=True)
 
         y_series = aggregated_features["target"]
         vol_series = aggregated_features["target_vol"]
+        bench_series = aggregated_features["nifty_ret"]
         X_df = aggregated_features.drop(columns=["target", "target_vol"])
 
-        return X_df, y_series, vol_series
+        return X_df, y_series, vol_series , bench_series
+
+    def compute_institutional_metrics(self,actual_ret: np.ndarray, pred_ret: np.ndarray, benchmark_ret: np.ndarray) -> dict:
+      
+       
+        trading_days = 252
+
+        
+        daily_rf = 0.065 / trading_days
+
+        #  SHARPE RATIO CALCULATIONS ───
+       
+        strategy_returns = np.sign(pred_ret) * actual_ret
+
+        excess_returns = strategy_returns - daily_rf
+        mean_excess = np.mean(excess_returns)
+        std_excess = np.std(excess_returns)
+
+        sharpe = (
+            (mean_excess / std_excess) * np.sqrt(trading_days)
+            if std_excess > 0
+            else 0.0
+        )
+
+        #  INFORMATION RATIO (IR) CALCULATIONS ───
+        # Active Return (Alpha) = Strategy Return - Benchmark Index Return
+        active_returns = strategy_returns - benchmark_ret
+
+        mean_active = np.mean(active_returns)
+        tracking_error = np.std(active_returns)  # Volatility of active returns
+
+        information_ratio = (
+            (mean_active / tracking_error) * np.sqrt(trading_days)
+            if tracking_error > 0
+            else 0.0
+        )
+
+        #  OUT-OF-SAMPLE STABILITY METRICS ───
+        win_rate = np.mean(np.sign(actual_ret) == np.sign(pred_ret)) * 100
+
+        # Profit Factor calculation
+        gains = strategy_returns[strategy_returns > 0].sum()
+        losses = np.abs(strategy_returns[strategy_returns < 0].sum())
+        profit_factor = (gains / losses) if losses > 0 else float("inf")
+
+        return {
+            "Annualized Sharpe Ratio": sharpe,
+            "Annualized Information Ratio": information_ratio,
+            "Out-of-Sample Win Rate": win_rate,
+            "System Profit Factor": profit_factor,
+        }
+
 
     def train(self, train_df: pd.DataFrame):
         print("LightGBM regression training starting...")
         
-        X_df, y_series, _ = self._prepare_aggregated_features(train_df, lookback=self.lookBack)
+        X_df, y_series, _ , _= self._prepare_aggregated_features(train_df, lookback=self.lookBack)
         self.engineered_feature_cols = list(X_df.columns)
 
         reg_x = self.reg_feature_scaler.fit_transform(X_df.values)
@@ -85,7 +142,7 @@ class LightGBMModel:
         if self.reg_model is None:
             raise RuntimeError("Call train() before predict()!")
 
-        X_df, y_series, vol_series = self._prepare_aggregated_features(test_df, lookback=self.lookBack)
+        X_df, y_series, vol_series , bench_series = self._prepare_aggregated_features(test_df, lookback=self.lookBack)
         X_df = X_df[self.engineered_feature_cols]
 
         reg_x = self.reg_feature_scaler.transform(X_df.values)
@@ -122,10 +179,25 @@ class LightGBMModel:
         baseline_mae = mean_absolute_error(actual_percentage_returns, np.zeros_like(actual_percentage_returns))
         print("\nLightGBM Analysis Report :")
         print(f"MAE  : {mean_absolute_error(actual_percentage_returns, reg_preds):.6f}  (baseline: {baseline_mae:.6f})")
-        print(f"R2 score of return: {r2_score(actual_percentage_returns, reg_preds)}")
+        # print(f"R2 score of return: {r2_score(actual_percentage_returns, reg_preds)}")
 
-        direction_acc = np.mean(np.sign(actual_percentage_returns) == np.sign(reg_preds))
-        print(f"Direction accuracy: {direction_acc * 100:.2f}%")
+        # direction_acc = np.mean(np.sign(actual_percentage_returns) == np.sign(reg_preds))
+        # print(f"Direction accuracy: {direction_acc * 100:.2f}%")
+
+        metrics = self.compute_institutional_metrics(
+            actual_ret=actual_percentage_returns,
+            pred_ret=reg_preds,
+            benchmark_ret=bench_series.values
+        )
+
+        print(f"\n" + "="*15 + f" {type(self).__name__} OOS METRICS " + "="*15)
+        print(f"  Return R2 Score               : {r2_score(actual_percentage_returns, reg_preds):.6f}")
+        print(f"  Annualized Sharpe Ratio       : {metrics['Annualized Sharpe Ratio']:.4f}")
+        print(f"  Annualized Information Ratio  : {metrics['Annualized Information Ratio']:.4f}")
+        print(f"  Out-of-Sample Win Rate        : {metrics['Out-of-Sample Win Rate']:.2f}%")
+        print(f"  System Profit Factor          : {metrics['System Profit Factor']:.4f}")
+        print("=" * 55 + "\n")
+
 
         plt.style.use("dark_background")
         plt.figure(figsize=(12, 6))
@@ -141,7 +213,7 @@ class LightGBMModel:
         if self.reg_model is None:
             raise RuntimeError("Call train() before forecast()!")
 
-        X_df, _, vol_series = self._prepare_aggregated_features(test_df, lookback=self.lookBack)
+        X_df, _, vol_series , _ = self._prepare_aggregated_features(test_df, lookback=self.lookBack)
         last_row = X_df[self.engineered_feature_cols].tail(1)
         reg_X_forecast = self.reg_feature_scaler.transform(last_row.values)
 

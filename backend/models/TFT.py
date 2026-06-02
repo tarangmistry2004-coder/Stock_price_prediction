@@ -1,168 +1,181 @@
-# from pytorch_forecasting import TemporalFusionTransformer , TimeSeriesDataSet
-# from pytorch_forecasting.metrics import QuantileLoss
-# from lightning import Trainer
-# from pytorch_lightning.callbacks import LearningRateMonitor
-
-# import pandas as pd
-# import numpy as np
-
-# class TFTmodel():
-#     def __init__(self):
-#         self.name = 'TFT'
-#         self.model = None
-#         self.df_columns = None
-
-#         self.lookback = 60
-#         self.lr = 0.05
-#         self.hidden_dim = 32
-#         self.attention_head = 2
-#         self.dropout = 0.2
-
-#         self.train_set = None 
-    
-#     def train(self ,df : pd.DataFrame):
-#         df = df.copy()
-
-#         close = df['Close'].astype(float)
-#         df["time_idx"] = np.arange(len(df))
-#         df["group"] = "stock"
-
-#         # print(df)
-#         TS_dataset = TimeSeriesDataSet(df ,target='target',allow_missing_timesteps=True, time_idx = "time_idx",group_ids = ["group"],)
-#         train_loader = TS_dataset.to_dataloader(train=True , batch_size=32 , num_workers = 0)
-
-#         lr_logger = LearningRateMonitor()
-
-#         self.model = TemporalFusionTransformer.from_dataset(TS_dataset ,  learning_rate = self.lr ,
-#                                                             attention_head_size = self.attention_head,dropout = self.dropout,
-#                                                             hidden_size = self.hidden_dim , output_size = 7,
-#                                                             loss = QuantileLoss())
-        
-#         trainer = Trainer(max_epochs = 10 , accelerator='auto' , callbacks=[lr_logger])
-#         trainer.fit(self.model,train_loader)
-
-#         self.train_set = TS_dataset
-
-#     def predict(self , df : pd.DataFrame):
-#         df = df.copy()
-
-#         df["time_idx"] = np.arange(len(df))
-#         df["group"] = "stock"
-#         df.dropna()
-#         TS_dataset = TimeSeriesDataSet.from_dataset(self.train_set , df , predict=True , stop_randomization=True)
-#         test_loader  = TS_dataset.to_dataloader(train=False , batch_size= 32 , num_workers = 0)
-
-#         pred = self.model.predict(test_loader ,mode = 'prediction' , return_x = True)
-
-#         for idx, symbol in enumerate(test_loader.x_to_index.itertuples()):
-#             pred_values = pred.output[idx].numpy()
-#             print(f"\nTicker: {symbol.symbol}")
-#             print(f"Predicted close prices for next day : {np.round(pred_values, 2)}")
-
-
-# ***********************************************************************************************************************************
-
-
-from pytorch_forecasting import TemporalFusionTransformer, TimeSeriesDataSet
-from pytorch_forecasting.metrics import QuantileLoss
-from lightning import Trainer
-from pytorch_lightning.callbacks import LearningRateMonitor
-
-import pandas as pd
+import os
+import warnings
+import matplotlib.pyplot as plt
 import numpy as np
+import pandas as pd
+from sklearn.preprocessing import MinMaxScaler
+from sklearn.metrics import r2_score,mean_absolute_error
 
-class TFTmodel():
+import lightning.pytorch as pl
+import torch
+from lightning.pytorch.callbacks import EarlyStopping, LearningRateMonitor
+from pytorch_forecasting import QuantileLoss, TemporalFusionTransformer, TimeSeriesDataSet
+
+warnings.filterwarnings("ignore")
+
+# Force complete hardware determinism for structural deep attention layers
+# os.environ["PYTHONHASHSEED"] = "42"
+# pl.seed_everything(42)
+# torch.manual_seed(42)
+
+
+class TFTQuantModel:
+
     def __init__(self):
-        self.name = 'TFT'
-        self.model = None
-        self.df_columns = None
+        self.reg_model = None
+        self.lookBack = 20  
+        self.reg_feature_scaler = MinMaxScaler(feature_range=(0, 1))
+        self.reg_target_scaler = MinMaxScaler(feature_range=(-100, 100))
+        self.target_col = "target"
+        self.engineered_feature_cols = None
+        self.training_dataset = None  # Holds metadata structure maps
 
-        self.lookback = 60
-        self.lr = 0.003
-        self.hidden_dim = 32
-        self.attention_head = 2
-        self.dropout = 0.2
+    def _prepare_tft_dataframe(self, df_features: pd.DataFrame, is_training: bool = True):
+        df = df_features.copy()
+        df = df.dropna().reset_index()
 
-        self.train_set = None
+        # TFT strictly requires an integer time index step tracker to map temporal sequences
+        df["time_idx"] = df.index
+        # A static categorical identifier mapping the asset pool
+        df["group_id"] = "STOCK_ASSET"
 
-    def _clean_df(self, df: pd.DataFrame) -> pd.DataFrame:
-        df = df.copy()
+        if is_training:
+            self.engineered_feature_cols = [c for c in df.columns if c not in [
+                    "Date",
+                    "time_idx",
+                    "group_id",
+                    self.target_col,
+                    "target_vol",
+                    "Close",
+                    "Return_1d",
+                ]
+            ]
 
-        df.replace([np.inf, -np.inf], np.nan, inplace=True)
-
-        if 'target' in df.columns:
-            df['target'] = df['target'].ffill().bfill()
-
-        # Drop any remaining rows where target is still NaN
-        before = len(df)
-        df = df.dropna(subset=['target'])
-        dropped = before - len(df)
-        if dropped > 0:
-            print(f"[Warning] Dropped {dropped} rows where 'target' was still NaN after fill.")
-
-        # Validate no NaN/inf remain in target
-        assert not df['target'].isna().any(), "target still contains NaN after cleaning"
-        assert not np.isinf(df['target']).any(), "target still contains infinite values"
+        if is_training:
+            df[self.engineered_feature_cols] = (self.reg_feature_scaler.fit_transform(df[self.engineered_feature_cols].values))
+            df[self.target_col] = (self.reg_target_scaler.fit_transform(df[self.target_col].values.reshape(-1, 1)).flatten())
+        else:
+            df[self.engineered_feature_cols] = (self.reg_feature_scaler.transform(df[self.engineered_feature_cols].values))
+            
 
         return df
 
-    def train(self, df: pd.DataFrame):
-        df = self._clean_df(df)
+    def train(self, train_df: pd.DataFrame):
+        print("Temporal Fusion Transformer (TFT) training starting...")
 
-        df["time_idx"] = np.arange(len(df))
-        df["group"] = "stock"
+       
+        df_processed = self._prepare_tft_dataframe(train_df, is_training=True)
 
-        # self.df_columns = [c for c in df.columns if c not in ['target' , 'time_idx' , 'group']]
-
-
-        TS_dataset = TimeSeriesDataSet(
-            df,
-            target='target',
-            allow_missing_timesteps=True,
+       
+        self.training_dataset = TimeSeriesDataSet(
+            df_processed,
             time_idx="time_idx",
-            group_ids=["group"],
-
-            min_encoder_length=self.lookback // 2,
-            max_encoder_length=self.lookback,
-
+            target=self.target_col,
+            group_ids=["group_id"],
+            min_encoder_length=self.lookBack,
+            max_encoder_length=self.lookBack,
             min_prediction_length=1,
-            max_prediction_length=1,
-
-            # time_varying_unknown_reals=["target"] + self.df_columns,
+            max_prediction_length=1, 
+            time_varying_known_reals=["time_idx"],  
+            time_varying_unknown_reals=[self.target_col]+ self.engineered_feature_cols,
+            target_normalizer=None,  
         )
 
-        train_loader = TS_dataset.to_dataloader(train=True, batch_size=32, num_workers=0)
-        lr_logger = LearningRateMonitor()
+        # Build PyTorch DataLoaders
+        train_dataloader = self.training_dataset.to_dataloader(batch_size=32, shuffle=False)
 
-        self.model = TemporalFusionTransformer.from_dataset(
-            TS_dataset,
-            learning_rate=self.lr,
-            attention_head_size=self.attention_head,
-            dropout=self.dropout,
-            hidden_size=self.hidden_dim,
-            # output_size=5,
-            loss=QuantileLoss(),
+        self.reg_model = TemporalFusionTransformer.from_dataset(
+            self.training_dataset,
+            learning_rate=0.001,
+            hidden_size=16, 
+            attention_head_size=2,  
+            dropout=0.3,
+            loss=QuantileLoss(), 
+            reduce_on_plateau_patience=4,
         )
 
-        trainer = Trainer(max_epochs=10, accelerator='auto', callbacks=[lr_logger])
-        trainer.fit(self.model, train_loader)
-
-        self.train_set = TS_dataset
-
-    def predict(self, df: pd.DataFrame):
-        df = self._clean_df(df)
-
-        df["time_idx"] = np.arange(len(df))
-        df["group"] = "stock"
-
-        TS_dataset = TimeSeriesDataSet.from_dataset(
-            self.train_set, df, predict=True, stop_randomization=True
+    
+        trainer = pl.Trainer(
+            max_epochs=30,
+            accelerator="cpu", 
+            enable_model_summary=True,
+            callbacks=[
+                EarlyStopping(monitor="train_loss", patience=5),
+                # LearningRateMonitor(),
+            ],
+            logger=False,
         )
-        test_loader = TS_dataset.to_dataloader(train=False, batch_size=32, num_workers=1)
 
-        pred = self.model.predict(test_loader, mode='prediction', return_x=True)
+       
+        trainer.fit(self.reg_model, train_dataloaders=train_dataloader)
+        print("TFT multi-head network training completely completed!\n")
 
-        for idx in range(len(pred.output)):
-            # pred_values = pred.output[idx].numpy()
-            pred_values = pred.output[idx].detach().cpu().numpy()
-            print(f"\nPredicted close prices for next step: {np.round(pred_values, 2)}")
+    def predict(self, test_df: pd.DataFrame) -> pd.Series:
+        if self.reg_model is None:
+            raise RuntimeError("Call train() before predict()!")
+
+        df_processed = self._prepare_tft_dataframe(test_df, is_training=False)
+
+        # Re-build out-of-sample prediction metadata datasets
+        validation_dataset = TimeSeriesDataSet.from_dataset( self.training_dataset, df_processed)
+        val_dataloader = validation_dataset.to_dataloader(batch_size=32, shuffle=False)
+
+
+        raw_predictions = self.reg_model.predict(val_dataloader, mode="prediction", return_x=False)
+        scaled_preds_1d = raw_predictions.numpy().flatten()
+
+        pred_zscores_1d = self.reg_target_scaler.inverse_transform(scaled_preds_1d.reshape(-1, 1)).flatten()
+
+      
+        aligned_df = df_processed.iloc[self.lookBack :].copy()
+        reg_idx = pd.to_datetime(aligned_df["Date"].values)
+
+        reg_preds = pred_zscores_1d * aligned_df["target_vol"].values
+        reg_preds = np.clip(reg_preds, -0.05, 0.05)
+
+        actual_percentage_returns = aligned_df["Return_1d"].values
+        baseline_mae = mean_absolute_error(actual_percentage_returns, np.zeros_like(actual_percentage_returns))
+
+        print("\n" + "=" * 15 + " TFT TRANSFORMER METRIC BRIEF " + "=" * 15)
+        print(f"Return R2 Score : {r2_score(actual_percentage_returns, reg_preds):.6f}")
+        print(f"Model MAE : {mean_absolute_error(actual_percentage_returns, reg_preds):.6f} (Baseline: {baseline_mae:.6f})")
+        print(f"  Directional Accuracy : {np.mean(np.sign(actual_percentage_returns) == np.sign(reg_preds)) * 100:.2f}%")
+
+        plt.style.use("dark_background")
+        plt.figure(figsize=(12, 6))
+        plt.plot(actual_percentage_returns, label="original return",color="green",)
+        plt.plot(reg_preds, label="predicted return", color="yellow")
+        plt.title("TFT Multi-Head Self-Attention Return Waves")
+        plt.legend()
+        plt.show()
+
+        return pd.Series(reg_preds, index=reg_idx, name="tft_pred_regression")
+
+    def forecast(self, test_df: pd.DataFrame) -> float:
+        if self.reg_model is None:
+            raise RuntimeError("Call train() before forecast()!")
+
+       
+        trailing_buffer_df = test_df.tail(self.lookBack + 5)
+        df_processed = self._prepare_tft_dataframe(trailing_buffer_df, is_training=False)
+
+        validation_dataset = TimeSeriesDataSet.from_dataset(self.training_dataset, df_processed)
+        val_dataloader = validation_dataset.to_dataloader( batch_size=1, shuffle=False)
+
+        raw_scaled_forecast = self.reg_model.predict(val_dataloader, mode="prediction")
+        pred_zscore_1d = self.reg_target_scaler.inverse_transform(raw_scaled_forecast.numpy().reshape(-1, 1)).flatten()
+
+        current_vol = float(test_df["target_vol"].iloc[-1])
+        unscaled_return = float(pred_zscore_1d[-1] * current_vol)
+        reg_pred_return = np.clip(unscaled_return, -0.015, 0.015)
+
+        last_date = test_df.index[-1]
+        last_close = test_df["Close"].iloc[-1]
+        estimated_close = last_close * (1 + reg_pred_return)
+
+        print(f"\nTEMPORAL FUSION TRANSFORMER (TFT) FORECAST")
+        print(f"Last Reference Processing Date : {last_date}")
+        print( f"Predicted Return Execution Vector : {reg_pred_return * 100:.4f}%")
+        print(f"Last Observed Close : {last_close:.2f} -> Estimated Target Close: {estimated_close:.2f}")
+
+        return reg_pred_return

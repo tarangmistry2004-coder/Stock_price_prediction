@@ -1,178 +1,3 @@
-# from xgboost import XGBRegressor
-# import xgboost as xgb
-
-# from sklearn.preprocessing import MinMaxScaler
-# import matplotlib.pyplot as plt
-# import pandas as pd
-# import numpy as np
-# from pathlib import Path
-# from sklearn.metrics import    mean_absolute_error,root_mean_squared_error,mean_absolute_percentage_error , r2_score
-
-
-
-# class XGBoostModel:
-
-#     def __init__(self):
-#         self.reg_model =  None
-#         self.lookBack = 20
-#         self.reg_feature_scaler = MinMaxScaler()
-#         self.reg_df_columns = None
-#         self.target_col = 'target'
-
-#     def _prepare_sequence(self,features: np.ndarray,targets: np.ndarray):
-
-#         x, y = [], []
-
-#         for i in range(self.lookBack, len(features)):
-#             seq = features[i - self.lookBack  : i ]
-#             x.append(seq.flatten())
-#             y.append(targets[i])
-
-#         return (np.array(x, dtype=np.float32),np.array(y, dtype=np.float32))
-
-
-#     def train(self, reg_df : pd.DataFrame):
-#         print('XGB regression traning ...')
-
-#         reg_df = reg_df.dropna().copy()
-#         self.reg_df_columns = [c for c in reg_df.columns if c not in ['target','Close','Return_1d']]
-
-#         reg_features_raw = reg_df[self.reg_df_columns].values
-#         reg_targets_raw  = reg_df[self.target_col].values
-
-
-#         reg_feature_scaled = self.reg_feature_scaler.fit_transform(reg_features_raw)
-
-#         reg_x , reg_y = self._prepare_sequence(reg_feature_scaled,reg_targets_raw)
-
-      
-       
-#         self.reg_model = XGBRegressor(
-#             n_estimators = 150,
-#             learning_rate = 0.01,
-#             max_depth = 3,
-#             subsample = 0.6,
-#             colsample_bytree = 0.15,
-#             reg_alpha = 0.5,
-#             reg_lambda = 5.0,
-#             objective = 'reg:absoluteerror',
-#             random_state = 42,
-#         )
-#         self.reg_model.fit(reg_x,reg_y)
-#         xgb.plot_importance(self.reg_model,max_num_features=100)
-#         plt.show()
-
-#         print('training done !!! \n')
-
-#     def predict(self, reg_df : pd.DataFrame) -> pd.Series:
-
-#         if  self.reg_model is  None:
-#             raise RuntimeError("Call train() before predict()!")
-
-      
-#         reg_df = reg_df.dropna().copy()
-
-#         reg_features_scaled = self.reg_feature_scaler.transform(reg_df[self.reg_df_columns].values)
-#         reg_target_raw = reg_df[self.target_col].values
-
-        
-#         reg_x , reg_y = self._prepare_sequence(reg_features_scaled,reg_target_raw)
-
-#         reg_preds = self.reg_model.predict(reg_x)
-
-#         reg_idx = reg_df.index[self.lookBack:]
-#         y_true_series = pd.Series(reg_y, index=reg_idx, name='actual_return')
-#         y_pred_series = pd.Series(reg_preds, index=reg_idx, name='pred_return')
-
-#         close_t = reg_df['Close'].iloc[self.lookBack:]
-#         future_close_actual = close_t * (1 + y_true_series)
-#         close_pred = close_t * (1 + y_pred_series)
-
-#         print(f'len close_t : {len(close_t)} | len reg_preds : {len(reg_preds)}')
-#         compare_result  = pd.DataFrame({'Actual close' : future_close_actual ,
-#                                         'pred close' : close_pred,
-#                                         'actual return ' : y_true_series,
-#                                         'pred return': y_pred_series})
-#         # print(future_close_actual , close_pred)
-#         compare_result['diff.'] =  compare_result['Actual close']-compare_result['pred close']
-#         compare_result['diff. %'] = ((compare_result['pred close'] - compare_result['Actual close'])/compare_result['pred close'])*100 
-#         print('XGBOOST Result : \n',compare_result)
-
-#         print(f"reg_preds stats:")
-#         print(f"mean : {reg_preds.mean():.6f}")
-#         print(f"std : {reg_preds.std():.6f}")
-#         print(f"min : {reg_preds.min():.6f}")
-#         print(f"max : {reg_preds.max():.6f}")
-
-#         baseline_mae = mean_absolute_error(reg_y, np.zeros_like(reg_y))
-#         nonzero      = reg_y != 0
-#         print('\nRgression result :')
-#         # print('reg y_true : \n',reg_y[-20:] , '\n', 'reg y_pred : \n',reg_preds[-20:])
-#         print(f"  MAE  : {mean_absolute_error(reg_y, reg_preds):.6f}  (naive-zero baseline: {baseline_mae:.6f})")
-#         print(f'R2 score of return: {r2_score(reg_y, reg_preds)}')
-#         print(f'R2 score of close price : {r2_score(future_close_actual, close_pred)}')
-#         # print(f"  RMSE : {root_mean_squared_error(reg_y, reg_preds):.6f}")
-#         # if nonzero.sum() > 0:
-#         #     mape = mean_absolute_percentage_error(reg_y[nonzero], reg_preds[nonzero]) 
-#         #     print(f"  MAPE : {mape:.2f}%  (on non-zero targets only)")
-
-#         zero_pred = np.zeros_like(reg_y)
-
-#         print(f"Model MAE: {mean_absolute_error(reg_y, reg_preds):.6f}")
-#         print(f"Zero MAE : {mean_absolute_error(reg_y, zero_pred):.6f}")
-
-#         direction_acc = np.mean(np.sign(reg_y) == np.sign(reg_preds))
-#         print(f"Direction accuracy: {direction_acc * 100:.2f}%")
-
-#         print(f"Return R2: {r2_score(reg_y, reg_preds):.6f}")
-
-#         plt.style.use('dark_background')  
-#         plt.figure(figsize=(12, 8))
-#         plt.title('XGBOOST result')
-#         plt.subplot(2,2,1)
-#         plt.plot(reg_y,label = 'original return',color='green')
-#         plt.legend()
-#         plt.subplot(2,2,2)
-#         plt.plot(reg_preds,label = 'predicted return',color='yellow')
-#         plt.legend()
-#         plt.subplot(2,2,3)
-#         plt.plot(future_close_actual,label = 'original price',color='green' )
-#         plt.legend()
-#         plt.subplot(2,2,4)
-#         plt.plot(close_pred,label = 'predicted price',color='yellow')
-#         plt.legend()
-#         plt.show()
-
-       
-
-#         return  pd.Series(reg_preds , index=reg_idx , name = 'xgb_pred_regression')
-
-#     def forecast(self,  reg_df : pd.DataFrame):
-
-#         if  self.reg_model is None:
-#             raise RuntimeError("Call train() before forecast()!")
-
-#         reg_df_clean = reg_df[self.reg_df_columns].dropna().copy()
-#         reg_features_scaled = self.reg_feature_scaler.transform(reg_df_clean.values)
- 
-#         reg_last_window = reg_features_scaled[-self.lookBack:]       # (lookBack, n_feat)
-#         reg_X_forecast  = reg_last_window.flatten().reshape(1, -1)   # (1, lookBack*n_feat)
- 
-#         reg_pred_return = self.reg_model.predict(reg_X_forecast)[0]      # raw return
-
-#         reg_last_date   = reg_df.index[-1]
-#         reg_last_close  = float(reg_df[reg_df_clean.index[-1]:]['Close'].iloc[0])
-#         next_day    = (reg_last_date + pd.offsets.BusinessDay(1)).strftime('%Y-%m-%d')
- 
-#         print("XGBoost Forecast")
-#         print(f"Last date : {reg_last_date.date()}")
-#         print(f"Forecast from : {next_day}")
-#         print(f"Return %  : {reg_pred_return * 100:+.4f}%")
-#         print(f"Last close  : {reg_last_close:.2f}  ->  Est. close: {reg_last_close * (1 + reg_pred_return):.2f}")
-
-
-
-
 from pathlib import Path
 import matplotlib.pyplot as plt
 import numpy as np
@@ -210,7 +35,11 @@ class XGBoostModel:
             "lag2_return",     
             "close_to_SMA50",    
             "consec_up",         
-            "consec_down"    
+            "consec_down" ,
+            'ADX' ,
+            'ADX_slope',
+            'Stochastic_K',
+            'Stochastic_D'   
         ]
         for col in immediate_cols:
             if col in df_features.columns:
@@ -248,21 +77,73 @@ class XGBoostModel:
         aggregated_features["target"] = df_features[self.target_col]
         aggregated_features["target_vol"] = df_features["target_vol"]
 
-       
+        aggregated_features["nifty_ret"] = df_features["nifty_ret"] if "nifty_ret" in df_features.columns else 0.0
+
         aggregated_features.dropna(inplace=True)
 
       
         y_series = aggregated_features["target"]
         X_df = aggregated_features.drop(columns=["target",'target_vol'])
+        bench_series = aggregated_features["nifty_ret"] 
         vol_series = aggregated_features["target_vol"]
 
-        return X_df, y_series , vol_series
+        return X_df, y_series , vol_series , bench_series
+    
+
+    def compute_institutional_metrics(self,actual_ret: np.ndarray, pred_ret: np.ndarray, benchmark_ret: np.ndarray) -> dict:
+        # Annualized trading days multiplier
+        trading_days = 252
+
+        # Risk-free rate fallback (6.5% standard Indian 91-day Treasury Bill yield)
+        daily_rf = 0.065 / trading_days
+
+        #  SHARPE RATIO CALCULATIONS
+        # Strategy returns assume we execute long or short matching the predicted sign
+        strategy_returns = np.sign(pred_ret) * actual_ret
+
+        excess_returns = strategy_returns - daily_rf
+        mean_excess = np.mean(excess_returns)
+        std_excess = np.std(excess_returns)
+
+        sharpe = (
+            (mean_excess / std_excess) * np.sqrt(trading_days)
+            if std_excess > 0
+            else 0.0
+        )
+
+        #  INFORMATION RATIO (IR) CALCULATIONS 
+        # Active Return (Alpha) = Strategy Return - Benchmark Index Return
+        active_returns = strategy_returns - benchmark_ret
+
+        mean_active = np.mean(active_returns)
+        tracking_error = np.std(active_returns)  # Volatility of active returns
+
+        information_ratio = (
+            (mean_active / tracking_error) * np.sqrt(trading_days)
+            if tracking_error > 0
+            else 0.0
+        )
+
+        #  OUT-OF-SAMPLE STABILITY METRICS ─
+        win_rate = np.mean(np.sign(actual_ret) == np.sign(pred_ret)) * 100
+
+        # Profit Factor calculation
+        gains = strategy_returns[strategy_returns > 0].sum()
+        losses = np.abs(strategy_returns[strategy_returns < 0].sum())
+        profit_factor = (gains / losses) if losses > 0 else float("inf")
+
+        return {
+            "Annualized Sharpe Ratio": sharpe,
+            "Annualized Information Ratio": information_ratio,
+            "Out-of-Sample Win Rate": win_rate,
+            "System Profit Factor": profit_factor,
+        }
 
     def train(self, reg_df: pd.DataFrame):
         print("XGB regression training starting...")
 
        
-        X_df, y_series , _ = self._prepare_aggregated_features( reg_df, lookback=self.lookBack)
+        X_df, y_series , _ , _ = self._prepare_aggregated_features( reg_df, lookback=self.lookBack)
 
         self.engineered_feature_cols = list(X_df.columns)
 
@@ -298,7 +179,7 @@ class XGBoostModel:
             raise RuntimeError("Call train() before predict()!")
 
         
-        X_df, y_series , vol_series = self._prepare_aggregated_features(
+        X_df, y_series , vol_series ,bench_series = self._prepare_aggregated_features(
             reg_df, lookback=self.lookBack
         )
 
@@ -354,7 +235,7 @@ class XGBoostModel:
         future_close_actual = close_t * (1 + y_true_series)
         close_pred = close_t * (1 + y_pred_series)
 
-        print(f"len close_t : {len(close_t)} | len reg_preds : {len(reg_preds)}")
+        # print(f"len close_t : {len(close_t)} | len reg_preds : {len(reg_preds)}")
         compare_result = pd.DataFrame(
             {
                 "Actual close": future_close_actual,
@@ -377,10 +258,25 @@ class XGBoostModel:
         baseline_mae = mean_absolute_error(actual_percentage_returns, np.zeros_like(reg_y))
         print("\nRegression result :")
         print(f"MAE  : {mean_absolute_error(actual_percentage_returns, reg_preds):.6f}  (naive-zero baseline: {baseline_mae:.6f})")
-        print(f"R2 score of return: {r2_score(actual_percentage_returns, reg_preds)}")
+        # print(f"R2 score of return: {r2_score(actual_percentage_returns, reg_preds)}")
 
-        direction_acc = np.mean(np.sign(actual_percentage_returns) == np.sign(reg_preds))
-        print(f"Direction accuracy: {direction_acc * 100:.2f}%")
+        # direction_acc = np.mean(np.sign(actual_percentage_returns) == np.sign(reg_preds))
+        # print(f"Direction accuracy: {direction_acc * 100:.2f}%")
+
+
+        metrics = self.compute_institutional_metrics(
+            actual_ret=actual_percentage_returns,
+            pred_ret=reg_preds,
+            benchmark_ret=bench_series.values
+        )
+
+        print(f"\n" + "="*15 + f" {type(self).__name__} OOS METRICS " + "="*15)
+        print(f"  Return R2 Score               : {r2_score(actual_percentage_returns, reg_preds):.6f}")
+        print(f"  Annualized Sharpe Ratio       : {metrics['Annualized Sharpe Ratio']:.4f}")
+        print(f"  Annualized Information Ratio  : {metrics['Annualized Information Ratio']:.4f}")
+        print(f"  Out-of-Sample Win Rate        : {metrics['Out-of-Sample Win Rate']:.2f}%")
+        print(f"  System Profit Factor          : {metrics['System Profit Factor']:.4f}")
+        print("=" * 55 + "\n")
 
         plt.style.use("dark_background")
         plt.figure(figsize=(12, 8))
@@ -390,41 +286,15 @@ class XGBoostModel:
         plt.legend()
         plt.show()
 
+
         return pd.Series(reg_preds, index=reg_idx, name="xgb_pred_regression")
 
-    # def forecast(self, reg_df: pd.DataFrame):
-    #     if self.reg_model is None:
-    #         raise RuntimeError("Call train() before forecast()!")
-
-    #     X_df, _ ,vol_series= self._prepare_aggregated_features(
-    #         reg_df, lookback=self.lookBack
-    #     )
-
-    #     last_row = X_df[self.engineered_feature_cols].tail(1)
-    #     reg_X_forecast = self.reg_feature_scaler.transform(last_row.values)
-
-    #     # reg_pred_return = self.reg_model.predict(reg_X_forecast)[0]
-    #     pred_zscore = float(self.reg_model.predict(reg_X_forecast)[0])
-    #     current_vol = float(vol_series.iloc[-1])
-    #     unscaled_return = pred_zscore * current_vol
-    #     reg_pred_return = np.clip(unscaled_return, -0.1, 0.1)
-
-    #     last_date = reg_df.index[-1]
-    #     last_close = reg_df["Close"].iloc[-1]
-    #     estimated_close = last_close * (1 + reg_pred_return)
-
-    #     print(f"\nFORECAST")
-    #     print(f"Last Reference Processing Date : {last_date}")
-    #     print(f"Predicted Return Execution Vector : {reg_pred_return * 100:.4f}%")
-    #     print(f"Last Observed Close : {last_close:.2f} -> Estimated Target Close: {estimated_close:.2f}")
-
-    #     return reg_pred_return
 
     def forecast(self, reg_df: pd.DataFrame) -> float:
         if self.reg_model is None:
             raise RuntimeError("Call train() before forecast()!")
 
-        X_df, _, vol_series = self._prepare_aggregated_features(
+        X_df, _, vol_series ,_ = self._prepare_aggregated_features(
             reg_df, lookback=self.lookBack
         )
 
@@ -456,4 +326,3 @@ class XGBoostModel:
         print(f"Last Observed Close : {last_close:.2f} -> Estimated Target Close: {estimated_close:.2f}")
 
         return reg_pred_return
-
