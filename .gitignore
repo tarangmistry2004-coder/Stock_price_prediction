@@ -1,0 +1,34 @@
+# Python
+__pycache__/
+*.pyc
+*.pyo
+
+# Virtual Environments
+.venv/
+venv/
+env/
+
+# Environment Variables
+.env
+
+# ML Models
+*.pth
+*.pt
+*.pkl
+*.joblib
+
+# Jupyter
+.ipynb_checkpoints/
+
+# Node.js
+node_modules/
+
+# Build files
+dist/
+build/
+
+# VS Code
+.vscode/
+
+# Logs
+*.log
