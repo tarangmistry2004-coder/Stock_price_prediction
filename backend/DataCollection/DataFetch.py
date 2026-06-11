@@ -55,8 +55,7 @@ def _add_technical_data(df: pd.DataFrame, nifty_close: pd.Series) -> pd.DataFram
     data['ATR'] = AverageTrueRange(high, low, close).average_true_range() / close
     data['realized_vol_5d'] = close.pct_change().rolling(5).std()
     data['realized_vol_20d'] = close.pct_change().rolling(20).std()
-    data['vol_regime'] = (data['realized_vol_5d'] / data['realized_vol_20d'].replace(0, np.nan)
-    )
+    data['vol_regime'] = (data['realized_vol_5d'] / data['realized_vol_20d'].replace(0, np.nan))
 
     # Trend 
     _sma20 = close.rolling(20).mean()
@@ -250,7 +249,7 @@ def _handle_missing_values(data: pd.DataFrame) -> pd.DataFrame:
         data[technical_cols] = data[technical_cols].ffill()
         data.dropna(subset=technical_cols, inplace=True)
 
-    # Never fill labels: unknown future return/class should not be invented.
+    
     data.dropna(subset=['target'], inplace=True)
 
     return data
@@ -270,6 +269,8 @@ def get_stock_data(stock: str, period: str , for_clf : bool = False) -> pd.DataF
 
         data.index = pd.to_datetime(data.index)
         data.dropna(inplace=True)
+
+        data_for_backtesting = data.copy()
 
         # nifty50 for market context 
         nifty_raw = yf.download('^NSEI', period=period, interval='1d')
@@ -345,7 +346,7 @@ def get_stock_data(stock: str, period: str , for_clf : bool = False) -> pd.DataF
         if for_clf:
              # target (classification)  
             ret = data['Return_1d'].shift(-1)
-            data['target'] = np.where(ret >  0.004,  1, np.where(ret < -0.004,  0, np.nan))
+            data['target'] = np.where(ret >  0,  1, np.where(ret < -0,  0, np.nan))
             data.drop(columns=[c for c in cols_to_drop if c in data.columns], inplace=True)
         else :
             # target (Regression)
@@ -359,12 +360,7 @@ def get_stock_data(stock: str, period: str , for_clf : bool = False) -> pd.DataF
 
         data = _handle_missing_values(data)
 
-        return data 
+        return data , data_for_backtesting
 
     except Exception as e:
         raise e
-    
-    
-# # df = get_stock_data('RELIANCE.NS','3y')
-# # print(df.info())
-# # print(_news_sentiment(_get_news_data('nvda')))

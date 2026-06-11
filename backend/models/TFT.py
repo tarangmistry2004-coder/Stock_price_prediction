@@ -13,12 +13,6 @@ from pytorch_forecasting import QuantileLoss, TemporalFusionTransformer, TimeSer
 
 warnings.filterwarnings("ignore")
 
-# Force complete hardware determinism for structural deep attention layers
-# os.environ["PYTHONHASHSEED"] = "42"
-# pl.seed_everything(42)
-# torch.manual_seed(42)
-
-
 class TFTQuantModel:
 
     def __init__(self):
@@ -28,15 +22,13 @@ class TFTQuantModel:
         self.reg_target_scaler = MinMaxScaler(feature_range=(-100, 100))
         self.target_col = "target"
         self.engineered_feature_cols = None
-        self.training_dataset = None  # Holds metadata structure maps
+        self.training_dataset = None  
 
     def _prepare_tft_dataframe(self, df_features: pd.DataFrame, is_training: bool = True):
         df = df_features.copy()
         df = df.dropna().reset_index()
 
-        # TFT strictly requires an integer time index step tracker to map temporal sequences
         df["time_idx"] = df.index
-        # A static categorical identifier mapping the asset pool
         df["group_id"] = "STOCK_ASSET"
 
         if is_training:

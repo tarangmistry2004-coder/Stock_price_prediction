@@ -1,4 +1,5 @@
-from catboost import CatBoostRegressor
+import catboost as cb
+from catboost import CatBoostRegressor 
 import matplotlib.pyplot as plt
 import numpy as np
 import pandas as pd

@@ -2,8 +2,7 @@ from pathlib import Path
 import matplotlib.pyplot as plt
 import numpy as np
 import pandas as pd
-from sklearn.metrics import (mean_absolute_error,mean_absolute_percentage_error,r2_score,root_mean_squared_error,
-)
+from sklearn.metrics import (mean_absolute_error,mean_absolute_percentage_error,r2_score,)
 from sklearn.preprocessing import MinMaxScaler
 from xgboost import XGBRegressor
 import xgboost as xgb
@@ -105,11 +104,8 @@ class XGBoostModel:
         mean_excess = np.mean(excess_returns)
         std_excess = np.std(excess_returns)
 
-        sharpe = (
-            (mean_excess / std_excess) * np.sqrt(trading_days)
-            if std_excess > 0
-            else 0.0
-        )
+        sharpe = ((mean_excess / std_excess) * np.sqrt(trading_days)
+            if std_excess > 0 else 0.0)
 
         #  INFORMATION RATIO (IR) CALCULATIONS 
         # Active Return (Alpha) = Strategy Return - Benchmark Index Return
@@ -220,10 +216,8 @@ class XGBoostModel:
        
         # variance_multiplier = (actual_std / pred_std) if pred_std > 0 else 1.0
 
-        # amplitude_dampener = 0.40
-        
-     
-        # reg_preds = reg_preds * 2.0005 
+        amplitude_dampener = 2.30
+        # reg_preds = reg_preds * amplitude_dampener 
         
        
         reg_preds = np.clip(reg_preds, -0.1, 0.1)
@@ -249,11 +243,11 @@ class XGBoostModel:
         compare_result["diff. %"] = ( (compare_result["pred close"] - compare_result["Actual close"]) / compare_result["pred close"] ) * 100
         # print("XGBOOST Result : \n", compare_result.tail(10))
 
-        print(f"reg_preds stats:")
-        print(f"mean : {reg_preds.mean():.6f}")
-        print(f"std : {reg_preds.std():.6f}")
-        print(f"min : {reg_preds.min():.6f}")
-        print(f"max : {reg_preds.max():.6f}")
+        # print(f"reg_preds stats:")
+        # print(f"mean : {reg_preds.mean():.6f}")
+        # print(f"std : {reg_preds.std():.6f}")
+        # print(f"min : {reg_preds.min():.6f}")
+        # print(f"max : {reg_preds.max():.6f}")
 
         baseline_mae = mean_absolute_error(actual_percentage_returns, np.zeros_like(reg_y))
         print("\nRegression result :")
@@ -294,9 +288,7 @@ class XGBoostModel:
         if self.reg_model is None:
             raise RuntimeError("Call train() before forecast()!")
 
-        X_df, _, vol_series ,_ = self._prepare_aggregated_features(
-            reg_df, lookback=self.lookBack
-        )
+        X_df, _, vol_series ,_ = self._prepare_aggregated_features(reg_df, lookback=self.lookBack)
 
         
         X_df = X_df[self.engineered_feature_cols]

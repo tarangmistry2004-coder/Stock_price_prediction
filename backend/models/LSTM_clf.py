@@ -2,13 +2,13 @@ import torch.nn as nn
 from torch.nn import LSTM, Linear
 from torch.utils.data import TensorDataset, DataLoader
 from sklearn.preprocessing import MinMaxScaler
-from sklearn.metrics import root_mean_squared_error , mean_absolute_error , mean_absolute_percentage_error , accuracy_score , classification_report , r2_score
+from sklearn.metrics import accuracy_score , classification_report , r2_score
 
 import matplotlib.pyplot as plt
 import torch
 import pandas as pd
 import numpy as np
-import shap
+
 
 class _LSTMNet(nn.Module):
     def __init__(self, input_size: int, hidden_dim: int, layers: int, dropout: float):

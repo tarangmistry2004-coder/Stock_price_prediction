@@ -1,163 +1,139 @@
 from backtesting import Backtest, Strategy
-import numpy as np
 import pandas as pd
+import numpy as np
+import matplotlib.pyplot as plt
+import seaborn as sns
 
+from ta.volatility import AverageTrueRange
 
-def _prepare_bt_data(test_df: pd.DataFrame, pred: pd.Series) -> pd.DataFrame:
-    """Prepares and aligns the input feature data for the backtesting engine.
-
-    Ensures that trailing metrics are shifted correctly to prevent look-ahead
-    bias.
-    """
-    df = test_df.copy()
-
-    # Reconstruct structural price bars if missing from the raw input series
-    if "Open" not in df.columns:
-        df["Open"] = df["Close"].shift(1).fillna(df["Close"])
-    if "High" not in df.columns:
-        df["High"] = df["Close"]
-    if "Low" not in df.columns:
-        df["Low"] = df["Close"]
-    if "Volume" not in df.columns:
-        df["Volume"] = 0
-
-    # CRITICAL LEAKAGE FIX: Shift the model predictions forward by exactly 1 index step.
-    # This guarantees that the prediction generated at Wednesday's close is executed
-    # at Thursday's opening bell, completely neutralizing look-ahead leakage.
-    aligned_signals = pred.reindex(df.index).shift(1)
-
-    # Capture your engineered ATR feature to use for volatility stop-losses
-    atr_series = df["ATR"] if "ATR" in df.columns else df["Close"] * 0.011
-
-    bt_df = pd.DataFrame(
-        {
-            "Open": df["Open"],
-            "High": df["High"],
-            "Low": df["Low"],
-            "Close": df["Close"],
-            "Volume": df["Volume"],
-            "signal": aligned_signals,
-            "atr_signal": atr_series,
-        }
-    ).dropna(subset=["Close", "signal"])
-
-    bt_df.index = pd.to_datetime(bt_df.index)
-    bt_df.sort_index(inplace=True)
-    return bt_df
-
-
-class ProductionAlphaReversalStrategy(Strategy):
-    """Production-optimized intraday trading strategy built around your model.
-
-    Executes trades at the opening bell based on the prior session's forecast,
-    manages risk using an ATR trailing stop-loss, and programmatically closes
-    positions at the closing bell.
-    """
-
-    # Hyperparameters for optimization
-    threshold = 0.0010  # 0.10% expected return threshold to trigger a trade
-    atr_multiplier = 1.50  # Risk multiple used to anchor stop-losses
+class MLZScoreStrategy(Strategy):
+    buy_threshold = 2.0   
+    sell_threshold = -1.0 
+    atr_multiplier = 2.0  
 
     def init(self):
-        # Bind the data arrays to the strategy class
-        self.pred_return = self.I(
-            lambda: self.data.signal, name="Model_Forecast"
-        )
-        self.atr_signal = self.I(
-            lambda: self.data.atr_signal, name="ATR_Volatility"
-        )
+        self.zscore_signal = self.I(lambda x: x, self.data.active_zscore)
+        self.atr = self.I(lambda x: x, self.data.ATR) 
 
     def next(self):
-        # Extract the most recent signal vector
-        forecast = self.pred_return[-1]
-        current_atr = self.atr_signal[-1]
+        current_zscore = self.zscore_signal[-1]
         current_price = self.data.Close[-1]
+        current_atr = self.atr[-1] 
 
-        if np.isnan(forecast):
+        if np.isnan(current_atr) or current_zscore == 0:
             return
 
-        # ─── RULE 1: INTRADAY HORIZON TIME-EXIT ───
-        # Your target matrix is built on a 1-day shift boundary.
-        # Force-close any open positions from the prior session to prevent overnight gap risk.
         if self.position:
-            self.position.close()
+            if current_zscore <= self.sell_threshold:
+                self.position.close()
+            
+            
+            else:
+                for trade in self.trades:
+                    if trade.is_long:
+                        potential_sl = current_price * (1 - (self.atr_multiplier * current_atr))
+                        if trade.sl is None or potential_sl > trade.sl:
+                            trade.sl = potential_sl
+        else:
+            if current_zscore >= self.buy_threshold:
+                stop_loss = current_price * (1 - (self.atr_multiplier * current_atr))
+                take_profit = current_price * (1 + (self.atr_multiplier * 2.5 * current_atr))
+                
+                self.buy(sl=stop_loss, tp=take_profit)
 
-        # ─── RULE 2: DIRECTIONAL ENTRY REGIME ───
-        if forecast > self.threshold:
-            # Predicted positive move: Execute a long position at the market open
-            # Secure the position using a strict volatility-adjusted stop-loss
-            stop_price = current_price - (self.atr_multiplier * current_atr)
-            self.buy(sl=stop_price)
-
-        elif forecast < -self.threshold:
-            # Predicted negative move: Execute a short position at the market open
-            stop_price = current_price + (self.atr_multiplier * current_atr)
-            self.sell(sl=stop_price)
-
-
-def run_production_backtest(
-    pred_return: pd.Series,
-    test_df: pd.DataFrame,
-    cash: float = 100_000,
-    commission: float = 0.0002,  # Covers standard institutional exchange fees
-    optimize: bool = True,
-) -> dict:
-    """Initializes and runs the backtesting simulation loop."""
-    bt_df = _prepare_bt_data(test_df, pred_return)
-
-    bt = Backtest(
-        bt_df,
-        ProductionAlphaReversalStrategy,
-        cash=cash,
-        commission=commission,
-        exclusive_orders=True,  # Automatically cancels opposing open orders
-    )
-
-    if optimize:
-        print("\n── Optimizing System Trading Parameters ──")
-        opt_stats = bt.optimize(
-            threshold=[0.0005, 0.001, 0.0015, 0.002, 0.003],
-            atr_multiplier=[1.0, 1.2, 1.5, 1.8, 2.0],
-            maximize="Sharpe Ratio",
-            return_heatmap=False,
-        )
-        print(f"  Optimal Signal Threshold : {opt_stats._strategy.threshold}")
-        print(
-            f"  Optimal ATR Risk Multiple: {opt_stats._strategy.atr_multiplier}"
-        )
-        stats = opt_stats
+def plot_charts(stats, model_name="Machine Learning Model"):
+   
+    equity_df = stats['_equity_curve']
+    trades_df = stats['_trades']
+    
+   
+    fig, axes = plt.subplots(3, 1, figsize=(12, 14), sharex=False)
+    plt.subplots_adjust(hspace=0.4)
+    
+  
+    #  1 The Equity Curve
+ 
+    axes[0].plot(equity_df.index, equity_df['Equity'], color='#2ca02c', label='Strategy Equity', linewidth=2)
+    axes[0].set_title(f'{model_name} - Compounding Equity Curve', fontsize=14, fontweight='bold')
+    axes[0].set_ylabel('Portfolio Value ($)', fontsize=12)
+    axes[0].grid(True, linestyle='--', alpha=0.5)
+    axes[0].legend(loc='upper left')
+    
+ 
+    # 2 The Drawdown Profile (Underwater Chart)
+   
+    # Convert drawdown decimal to percentage
+    drawdown_pct = equity_df['DrawdownPct'] * -100 
+    
+    axes[1].fill_between(equity_df.index, drawdown_pct, 0, color='#d62728', alpha=0.3, label='Drawdown %')
+    axes[1].plot(equity_df.index, drawdown_pct, color='#d62728', linewidth=1)
+    axes[1].set_title('Drawdown Profile (Capital Risk)', fontsize=14, fontweight='bold')
+    axes[1].set_ylabel('Drawdown (%)', fontsize=12)
+    axes[1].set_ylim(drawdown_pct.min() * 1.2, 0) # Dynamic scaling
+    axes[1].grid(True, linestyle='--', alpha=0.5)
+    
+   
+    #  3 Trade Return Distribution
+   
+    if not trades_df.empty:
+        # Multiply by 100 to convert decimal returns to percentages
+        trade_returns = trades_df['ReturnPct'] * 100
+        
+        sns.histplot(trade_returns, kde=True, ax=axes[2], color='#1f77b4', bins=15)
+        axes[2].axvline(0, color='black', linestyle='--', linewidth=1.5, label='Break-Even')
+        axes[2].axvline(trade_returns.mean(), color='orange', linestyle='-', linewidth=1.5, 
+                        label=f'Avg Trade: {trade_returns.mean():.2f}%')
+        
+        axes[2].set_title('Distribution of Individual Trade Returns', fontsize=14, fontweight='bold')
+        axes[2].set_xlabel('Trade Return (%)', fontsize=12)
+        axes[2].set_ylabel('Frequency (Count)', fontsize=12)
+        axes[2].legend()
     else:
+        axes[2].text(0.5, 0.5, 'No trades executed to display distribution.', ha='center', va='center')
+
+    plt.show()
+
+
+
+class ModelBacktester:
+    def __init__(self, initial_cash: float = 100000.0, commission: float = 0.001):
+        self.initial_cash = initial_cash
+        self.commission = commission 
+
+    def run_backtest(self, model_name: str, raw_df: pd.DataFrame, test_set: pd.DataFrame, predictions: np.ndarray) -> pd.Series:
+       
+        df_bt = raw_df.copy()
+        
+        atr_indicator = AverageTrueRange(
+            high=df_bt['High'], 
+            low=df_bt['Low'], 
+            close=df_bt['Close']
+        )
+       
+        df_bt['ATR'] = atr_indicator.average_true_range() / df_bt['Close'] 
+        
+        raw_pred_col = f"{model_name.lower()}_pred"
+        df_bt[raw_pred_col] = np.nan
+        df_bt.loc[test_set.index, raw_pred_col] = predictions
+        
+        window = 100
+        rolling_mean = df_bt[raw_pred_col].rolling(window=window, min_periods=window).mean()
+        rolling_std = df_bt[raw_pred_col].rolling(window=window, min_periods=window).std()
+        
+        zscore_col = f"{model_name.lower()}_zscore"
+        df_bt[zscore_col] = (df_bt[raw_pred_col] - rolling_mean) / rolling_std
+        df_bt[zscore_col] = df_bt[zscore_col].replace([np.inf, -np.inf], 0).fillna(0)
+        
+       
+        test_period_df = df_bt.loc[test_set.index].copy()
+        test_period_df['active_zscore'] = test_period_df[zscore_col]
+        
+      
+        bt = Backtest(test_period_df, MLZScoreStrategy, cash=10000, commission=0.0005, exclusive_orders=True)
+        
         stats = bt.run()
 
-    # ─── FIXED CRITICAL KEY MATCHING DICTIONARY ──────────────────────────────
-    # Using dynamic .get() handles key variations across library updates safely [1.1]
-    final_equity = stats.get("Equity Final [$]", stats.get("Equity Final", cash))
-    total_return = stats.get("Return [%]", stats.get("Return %", 0.0))
-    bh_return = stats.get("Buy & Hold Return [%]", stats.get("Buy & Hold Return %", 0.0))
-    max_drawdown = stats.get("Max. Drawdown [%]", stats.get("Max. Drawdown %", 0.0))
-    sharpe_ratio = stats.get("Sharpe Ratio", 0.0)
-    total_trades = stats.get("# Trades", 0)
-    win_rate = stats.get("Win Rate [%]", stats.get("Win Rate %", 0.0))
-
-    # Log metrics out to the terminal console
-    print("\n" + "=" * 15 + " BACKTEST OUTPUT SUMMARY " + "=" * 15)
-    print(f"Start Balance            : ₹{cash:,.2f}")
-    print(f"Final Equity Account     : ₹{final_equity:,.2f}")
-    print(f"Total Return Metric      : {total_return:.2f}%")
-    print(f"Buy & Hold Return        : {bh_return:.2f}%")
-    print(f"Max Peak Drawdown        : {max_drawdown:.2f}%")
-    print(f"Sharpe Ratio Metric      : {sharpe_ratio:.4f}")
-    print(f"Total Closed Trades Executed: {total_trades}")
-    print(f"Win Rate Percentage      : {win_rate:.2f}%")
-    print("=" * 55 + "\n")
-
-    # Save the interactive chart file securely
-    try:
-        bt.plot(filename="production_backtest_report.html", open_browser=False)
-        print(
-            "  Interactive chart report saved → production_backtest_report.html"
-        )
-    except Exception as e:
-        print(f"[WARNING] Chart plotting skipped: {e}")
-
-    return stats
+        print(f'\nMODEL : {model_name}')
+        print(stats)
+        plot_charts(stats , model_name=model_name)
+        return stats

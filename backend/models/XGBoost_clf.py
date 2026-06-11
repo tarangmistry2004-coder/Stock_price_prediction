@@ -51,35 +51,21 @@ class XGBoost_CLFModel:
         self.model = XGBClassifier(
 
             objective='binary:logistic',
-            n_estimators=500,
-            max_depth=5,
-            learning_rate=0.05,
-            subsample=0.8,
-            colsample_bytree=0.8,
-            reg_lambda=1.0,
+            n_estimators=150,
+            max_depth=3,
+            learning_rate=0.015,
+            subsample=0.70,
+            colsample_bytree=0.35,
+            reg_alpha = 0.5,
+            reg_lambda=3.0,
             random_state=42,
             scale_pos_weight=scale_pos_weight,
             eval_metric='logloss',
         )
 
-        # self.model.fit(features_scaled, targets_raw)
-        self.model.fit(x,y)
+        self.model.fit(features_scaled, targets_raw)
+        # self.model.fit(x,y)
 
-        # print(self.model.feature_importances_)
-        # print(len(self.df_columns))
-        # print(len(self.model.feature_importances_))
-
-        # importance = pd.DataFrame({
-        #     "Feature": self.df_columns,
-        #     "Importance": self.model.feature_importances_
-        # })
-
-        # importance = importance.sort_values(
-        #     by="Importance",
-        #     ascending=False
-        # )
-
-        # print(importance)
 
         
     def predict(self, df: pd.DataFrame) -> pd.Series:
@@ -97,46 +83,43 @@ class XGBoost_CLFModel:
 
         x, y = self._prepare_sequence(features_scaled,targets_raw)
        
-        # pred_proba = self.model.predict_proba(features_scaled)[:, 1]
-        pred_proba = self.model.predict_proba(x)[:, 1]
+        pred_proba = self.model.predict_proba(features_scaled)[:, 1]
+        # pred_proba = self.model.predict_proba(x)[:, 1]
         pred_label = (pred_proba >= 0.5).astype(int)
 
         print('\nClassifiaction result :')
         # print('cls y_true : \n',y_true[-20:] , '\n', 'cls y_pred : \n',pred_label[-20:])
-        print(f"\nAccuracy : {accuracy_score(y, pred_label) * 100:.2f}%")
-        print(f'Confusion matrix :\n {confusion_matrix(y,pred_label)}')
-        print(f"Baseline (majority class): {max(y_true.mean(), 1-y_true.mean())*100:.2f}%")
-        print(classification_report(y,pred_label,target_names=['Down', 'Up']))
+        # print(f"\nAccuracy : {accuracy_score(y, pred_label) * 100:.2f}%")
+        # print(f'Confusion matrix :\n {confusion_matrix(y,pred_label)}')
+        # print(f"Baseline (majority class): {max(y_true.mean(), 1-y_true.mean())*100:.2f}%")
+        # print(classification_report(y,pred_label,target_names=['Down', 'Up']))
+
+        print(f"\nAccuracy : {accuracy_score(targets_raw, pred_label) * 100:.2f}%")
+        print(f'Confusion matrix :\n {confusion_matrix(targets_raw,pred_label)}')
+        print(f"Baseline (majority class): {max(targets_raw.mean(), 1-targets_raw.mean())*100:.2f}%")
+        print(classification_report(targets_raw,pred_label,target_names=['Down', 'Up']))
 
       
-        confident_mask = ((pred_proba > 0.60) | (pred_proba < 0.40))
+        # confident_mask = ((pred_proba > 0.58) | (pred_proba < 0.42))
 
-        if confident_mask.sum() > 0:
+        pred_mean = np.mean(pred_proba)
+        pred_std  = np.std(pred_proba)
+
+        # Set your high-conviction threshold dynamically at 1.25 standard deviations
+        # away from the mean. This naturally scales the mask to find high-value days!
+        upper_bound = pred_mean + (1.25 * pred_std)
+        lower_bound = pred_mean - (1.25 * pred_std)
+
+        confident_mask = (pred_proba >= upper_bound) | (pred_proba <= lower_bound)
+
+        if confident_mask.sum() > 10:
             filtered_pred = np.where(pred_proba[confident_mask] >= 0.5,1,0)
-            filtered_true = y[confident_mask]
+            # filtered_true = y[confident_mask]
+            filtered_true = targets_raw[confident_mask]
             filtered_acc = accuracy_score(filtered_true,filtered_pred)
             print(f"\nFiltered Accuracy : {filtered_acc * 100:.2f}%")
             print(f"Trade Frequency : "f"{confident_mask.mean() * 100:.2f}%")
 
-        # result = permutation_importance(
-        #     self.model,
-        #     features_scaled,
-        #     targets_raw,
-        #     n_repeats=10,
-        #     random_state=42
-        # )
-
-        # importance = pd.DataFrame({
-        #     "Feature": self.df_columns,
-        #     "Importance": result.importances_mean
-        # })
-
-        # print(
-        #     importance.sort_values(
-        #         by="Importance",
-        #         ascending=False
-        #     )
-        # )
     def forecast(self, df: pd.DataFrame):
 
         if  self.model is None:
@@ -146,22 +129,29 @@ class XGBoost_CLFModel:
         features_scaled = self.feature_scaler.transform(df_clean[self.df_columns].values)
         last_window = features_scaled[-self.lookBack:]
 
-        x = last_window.flatten().reshape(1, -1)
-        # x = last_window[-1].reshape(1,-1)
+        # x = last_window.flatten().reshape(1, -1)
+        x = last_window[-1].reshape(1,-1)
 
         pred_proba = self.model.predict_proba(x)[0,1]
+        pred_mean = np.mean(pred_proba)
+        pred_std  = np.std(pred_proba)
 
         direction = "UP" if pred_proba >= 0.5 else "DOWN"
 
-        confidence = ("High" if abs(pred_proba - 0.5) > 0.15 else "Low")
+        upper_limit = pred_mean + (1.25 * pred_std)
+        lower_limit = pred_mean - (1.25 * pred_std)
+        
+        confidence = "High" if (pred_proba >= upper_limit or pred_proba <= lower_limit) else "Low"
 
+        # confidence = "High" if (pred_proba >= 0.58 or pred_proba <= 0.42) else "Low"
+            
         last_date = df_clean.index[-1]
 
         next_day = (last_date + pd.offsets.BusinessDay(1)).strftime('%Y-%m-%d')
 
         print("\nForecast")
         print(f"Last date    : {last_date.date()}")
-        print(f"Forecast for : {next_day}")
+        # print(f"Forecast for : {next_day}")
         # print(f"Probability  : {pred_proba * 100:.2f}%")
         print(f"Direction    : {direction}")
         print(f"Confidence   : {confidence}")

@@ -138,6 +138,9 @@ class LightGBMModel:
         self.reg_model.fit(reg_x, reg_y)
         print("LightGBM training completed successfully!\n")
 
+        lgb.plot_importance(self.reg_model, max_num_features=25)
+        plt.show()
+
     def predict(self, test_df: pd.DataFrame) -> pd.Series:
         if self.reg_model is None:
             raise RuntimeError("Call train() before predict()!")
