@@ -12,7 +12,7 @@ from models.LightGBMmodel import LightGBMModel
 
 from BT.test1 import ModelBacktester
 
-from models.NIftyTFT import prepare_tft_data , initialize_tft_and_trainer ,run_predictions_and_plot
+from models.NIftyTFT import prepare_tft_data , initialize_tft_and_trainer ,run_predictions_and_plot , run_live_future_prediction
 
 import pandas as pd
 import numpy as np
@@ -60,7 +60,7 @@ regression_ds , data_for_backtesting = get_stock_data('reliance.ns','max')
 regression_train_Set = regression_ds.iloc[ : int(len(regression_ds) * 0.8)]
 regression_test_Set =  regression_ds.iloc[int(len(regression_ds) * 0.8) : ]
 
-# for i in range(len(regression_ds.columns)): print(f'col.{i} : {regression_ds.columns[i]}')
+for i in range(len(regression_ds.columns)): print(f'col.{i} : {regression_ds.columns[i]}')
 # for i in range(len(classification_ds.columns)): print(f'col.{i} : {classification_ds.columns[i]}')
 
 # print('last row : ', regression_ds[-1:])
@@ -75,29 +75,29 @@ regression_test_Set =  regression_ds.iloc[int(len(regression_ds) * 0.8) : ]
 # print(f"Regression test shape: {regression_test_Set.shape}\n")
 
 
-model.train(regression_train_Set)
-lstm_pred_regression = model.predict( regression_test_Set)
-model.forecast(regression_ds)    
-print('lstm pred max : ',lstm_pred_regression.max())
-print('lstm pred min : ',lstm_pred_regression.min())
+# model.train(regression_train_Set)
+# lstm_pred_regression = model.predict( regression_test_Set)
+# model.forecast(regression_ds)    
+# print('lstm pred max : ',lstm_pred_regression.max())
+# print('lstm pred min : ',lstm_pred_regression.min())
 
-model2.train(regression_train_Set)
-xgb_pred_regression = model2.predict(regression_test_Set)
-model2.forecast(regression_ds)
-print('xgb pred max : ',xgb_pred_regression.max())
-print('xgb pred min : ',xgb_pred_regression.min())  
+# model2.train(regression_train_Set)
+# xgb_pred_regression = model2.predict(regression_test_Set)
+# model2.forecast(regression_ds)
+# print('xgb pred max : ',xgb_pred_regression.max())
+# print('xgb pred min : ',xgb_pred_regression.min())  
 
-cat_boost.train(regression_train_Set)
-cat_reg_pred = cat_boost.predict(regression_test_Set)
-cat_boost.forecast(regression_ds)
-print('cat pred max : ',cat_reg_pred.max())
-print('cat pred min : ',cat_reg_pred.min())
+# cat_boost.train(regression_train_Set)
+# cat_reg_pred = cat_boost.predict(regression_test_Set)
+# cat_boost.forecast(regression_ds)
+# print('cat pred max : ',cat_reg_pred.max())
+# print('cat pred min : ',cat_reg_pred.min())
 
-light_gbm.train(regression_train_Set)
-lightgbm_reg_pred = light_gbm.predict(regression_test_Set)
-light_gbm.forecast(regression_ds)
-print('lightgbm pred max : ',lightgbm_reg_pred.max())
-print('lightgbm pred min : ',lightgbm_reg_pred.min())
+# light_gbm.train(regression_train_Set)
+# lightgbm_reg_pred = light_gbm.predict(regression_test_Set)
+# light_gbm.forecast(regression_ds)
+# print('lightgbm pred max : ',lightgbm_reg_pred.max())
+# print('lightgbm pred min : ',lightgbm_reg_pred.min())
 
 # tft_model = TFTQuantModel()
 # tft_model.train(train_df=regression_train_Set)
@@ -122,10 +122,16 @@ print('lightgbm pred min : ',lightgbm_reg_pred.min())
 
 # ******************************************************************************************************
 
-nifty_df = get_nifty_data()
-train_loader, val_loader, test_loader, train_dataset = prepare_tft_data(nifty_df=nifty_df)
+# nifty_df = get_nifty_data()
+# train_loader, val_loader, test_loader, train_dataset = prepare_tft_data(nifty_df=nifty_df)
 # tft_model, lightning_trainer = initialize_tft_and_trainer(train_dataset)
 # lightning_trainer.fit(tft_model,train_dataloaders=train_loader, val_dataloaders=val_loader)
 
 # run_predictions_and_plot(best_checkpoint_path=r'D:\Stock Price Forecasting\backend\tft_logs\nifty50_forecast\version_3\checkpoints\best-tft-nifty50-epoch=05-val_loss=0.0138.ckpt',
 #                          test_dataloader=test_loader,df=nifty_df)
+
+
+# live_target = run_live_future_prediction(
+#     best_checkpoint_path=r'D:\Stock Price Forecasting\backend\tft_logs\nifty50_forecast\version_3\checkpoints\best-tft-nifty50-epoch=05-val_loss=0.0138.ckpt', 
+#     df=nifty_df, 
+#     asset_ticker="RELIANCE.NS")

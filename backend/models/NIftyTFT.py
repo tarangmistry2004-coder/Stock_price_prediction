@@ -1,4 +1,6 @@
 import pandas as pd
+import numpy as np
+from sklearn.metrics import mean_absolute_error, r2_score
 import matplotlib.pyplot as plt
 from pytorch_forecasting import TimeSeriesDataSet
 from pytorch_forecasting.data import GroupNormalizer
@@ -164,7 +166,36 @@ def run_predictions_and_plot(best_checkpoint_path, test_dataloader, df, asset_ti
     model = TemporalFusionTransformer.load_from_checkpoint(best_checkpoint_path)
     model.eval() 
     
-    raw_predictions = model.predict(test_dataloader, mode="raw", return_x=True)
+    raw_predictions = model.predict(test_dataloader, mode="raw", return_x=True , return_y=True)
+
+
+    preds_tensor = raw_predictions.output.prediction
+    if len(preds_tensor.shape) == 3:
+    #  (samples, time_steps, quantiles) 
+        preds = preds_tensor[:, 0, 1].cpu().numpy().flatten()
+    else:
+    # (samples, quantiles) 
+        preds = preds_tensor[:, 1].cpu().numpy().flatten()
+    
+    if isinstance(raw_predictions.y, tuple):
+        actuals = raw_predictions.y[0].cpu().numpy().flatten()
+    else:
+        actuals = raw_predictions.y.cpu().numpy().flatten()
+
+    
+    tft_mae = mean_absolute_error(actuals, preds)
+    tft_r2 = r2_score(actuals, preds)
+
+   
+    correct_direction = np.sign(actuals) == np.sign(preds)
+    directional_accuracy = np.mean(correct_direction) * 100
+
+ 
+    print("=============== TFT OOS EVALUATION METRICS ===============")
+    print(f"MAE : {tft_mae:.6f}")
+    print(f"Return R2 Score : {tft_r2:.6f}")
+    print(f"Directional Accuracy    : {directional_accuracy:.2f}%")
+    print("==========================================================")
    
     fig, ax = plt.subplots(figsize=(12, 6))
     
@@ -219,3 +250,91 @@ def run_predictions_and_plot(best_checkpoint_path, test_dataloader, df, asset_ti
         print(f"Actual Close Tomorrow ({pred_date_str}):   ₹{actual_price:.2f}")
     print(f" TFT Predicted Close ({pred_date_str}):     ₹{p50_price:.2f}")
     print(f"Volatility Risk Range (10%-90%):  ₹{p10_price:.2f} to ₹{p90_price:.2f}")
+
+def run_live_future_prediction(best_checkpoint_path, df, asset_ticker="RELIANCE.NS"):
+   
+    date_col = "Date" if "Date" in df.columns else "date"
+    processed_df = df.copy()
+    processed_df[date_col] = pd.to_datetime(processed_df[date_col])
+    
+    
+    ticker_df = processed_df[processed_df["Ticker"] == asset_ticker].sort_values("TimeIndex")
+    if ticker_df.empty:
+        print(f"Error: Ticker '{asset_ticker}' not found in dataframe.")
+        return
+        
+    last_row = ticker_df.iloc[-1]
+    last_date = last_row[date_col]
+    last_idx = last_row["TimeIndex"]
+    last_known_price = last_row["Close"]
+    
+    #
+    next_date = last_date + pd.tseries.offsets.BDay(1)
+    next_idx = last_idx + 1
+    
+    # Format dates as clean strings for visual printing
+    last_date_str = last_date.strftime('%Y-%m-%d')
+    next_date_str = next_date.strftime('%Y-%m-%d')
+    
+    print(f"Latest Market Baseline Date : {last_date_str} )")
+    print(f"Generating Live Forecast For: {next_date_str} )")
+   
+    
+   
+    future_row = last_row.copy()
+    future_row[date_col] = next_date
+    future_row["TimeIndex"] = next_idx
+    future_row["DayOfWeek"] = str(next_date.dayofweek)
+    future_row["Month"] = str(next_date.month)
+    future_row["Target"] = 0.0  # Placeholder target value for the model to overwrite
+    
+ 
+    extended_df = pd.concat([processed_df, pd.DataFrame([future_row])], ignore_index=True)
+    
+    #
+    extended_df['Ticker'] = extended_df['Ticker'].astype(str)
+    extended_df['Sector'] = extended_df['Sector'].astype(str)
+    extended_df['DayOfWeek'] = extended_df['DayOfWeek'].astype(str)
+    extended_df['Month'] = extended_df['Month'].astype(str)
+    
+    model = TemporalFusionTransformer.load_from_checkpoint(best_checkpoint_path)
+    model.eval()
+    
+    future_dataset = TimeSeriesDataSet.from_parameters(
+        model.dataset_parameters, 
+        extended_df, 
+        predict=True, 
+        stop_randomization=True
+    )
+    future_loader = future_dataset.to_dataloader(train=False, batch_size=1, num_workers=0)
+    
+    
+    raw_predictions = model.predict(future_loader, mode="raw", return_x=True, return_y=False)
+    
+   
+    index_ledger = future_loader.dataset.decoded_index
+    ticker_indices = index_ledger[index_ledger["Ticker"] == asset_ticker]
+    ticker_idx = ticker_indices.index[0]
+    
+   
+    pred_tensor = raw_predictions.output.prediction[ticker_idx, 0]
+    num_quantiles = pred_tensor.shape[-1]
+    
+    p10_return = pred_tensor[0].item()                         # 10th percentile
+    p50_return = pred_tensor[num_quantiles // 2].item()         # 50th percentile (Median)
+    p90_return = pred_tensor[-1].item()                        # 90th percentile
+    
+  
+    p10_price = last_known_price * (1 + p10_return)
+    p50_price = last_known_price * (1 + p50_return)
+    p90_price = last_known_price * (1 + p90_return)
+    
+  
+    print(f"LIVE TARGET PREDICTIONS FOR: {asset_ticker}")
+    print(f"Last History Close Price ({last_date_str}) : ₹{last_known_price:.2f}")
+    print(f"Predicted Return Vector : {p50_return * 100:+.4f}%")
+    print(f"TFT Estimated Target Close ({next_date_str}): ₹{p50_price:.2f}")
+    print(f"Volatility Risk Range (10%-90%) : ₹{p10_price:.2f} to ₹{p90_price:.2f}")
+   
+    
+    return p50_price
