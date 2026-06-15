@@ -250,7 +250,7 @@ def _handle_missing_values(data: pd.DataFrame) -> pd.DataFrame:
         data.dropna(subset=technical_cols, inplace=True)
 
     
-    data.dropna(subset=['target'], inplace=True)
+    # data.dropna(subset=['target'], inplace=True)
 
     return data
 

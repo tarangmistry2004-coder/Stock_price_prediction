@@ -216,7 +216,7 @@ def run_predictions_and_plot(best_checkpoint_path, test_dataloader, df, asset_ti
     plt.title(f"TFT Return Forecast: {asset_ticker}\nHistory Window End: {last_date_str} | Target Prediction Date: {pred_date_str}", 
               fontsize=13, fontweight='bold')
     plt.xlabel("Sequential Forecasting Steps")
-    plt.show()
+    # plt.show()
     
    
     history_df = ticker_df[(ticker_df["TimeIndex"] >= time_idx_first) & (ticker_df["TimeIndex"] < time_idx_pred)]
@@ -337,4 +337,15 @@ def run_live_future_prediction(best_checkpoint_path, df, asset_ticker="RELIANCE.
     print(f"Volatility Risk Range (10%-90%) : ₹{p10_price:.2f} to ₹{p90_price:.2f}")
    
     
-    return p50_price
+    return {
+        'model': 'TFT',
+        'ticker' : asset_ticker,
+        'last_date' : last_date ,
+        'last_close' : last_known_price,   
+        'prediction':p50_return,
+        'est_close' : p50_price,
+        'risk_range' : {
+            'low': p10_price,
+            'high' : p90_price,
+            }
+        }

@@ -46,6 +46,12 @@ class LSTMmodel:
         self.reg_feature_scaler = MinMaxScaler(feature_range=(0, 1))
         self.reg_df_columns = None
         self.target_col = "target"
+        
+        self.r2 = None
+        self.mae = None
+        self.sharpe_ratio = None
+        self.baseline_mae = None
+        self.win_rate = None
 
     def _prepare_sequence(self, features: np.ndarray, targets: np.ndarray):
         x, y = [], []
@@ -60,29 +66,27 @@ class LSTMmodel:
        
         self.reg_df_columns = [c for c in reg_df.columns if c not in [self.target_col, "Close", "Return_1d", "target_vol"]]
 
-
-        split_idx = int(len(reg_df) * 0.85)
-        train_df = reg_df.iloc[:split_idx].copy()
-        val_df = reg_df.iloc[split_idx:].copy()
-
-        train_features_raw = train_df[self.reg_df_columns].values
-        train_targets_raw = train_df[self.target_col].values
-
-        val_features_raw = val_df[self.reg_df_columns].values
-        val_targets_raw = val_df[self.target_col].values
-
-        train_features_scaled = self.reg_feature_scaler.fit_transform(train_features_raw)
-        val_features_scaled = self.reg_feature_scaler.transform(val_features_raw)
-       
      
-        X_train, y_train = self._prepare_sequence(train_features_scaled, train_targets_raw)
-        X_val, y_val = self._prepare_sequence(val_features_scaled, val_targets_raw)
+        split_idx = int(len(reg_df) * 0.85)
+        train_df = reg_df.iloc[:split_idx]
+        self.reg_feature_scaler.fit(train_df[self.reg_df_columns].values)
 
-        # Convert to PyTorch Datasets
+        full_features_scaled = self.reg_feature_scaler.transform(reg_df[self.reg_df_columns].values)
+        full_targets = reg_df[self.target_col].values
+
+       
+        X_all, y_all = self._prepare_sequence(full_features_scaled, full_targets)
+
+      
+        train_sequence_len = split_idx - self.lookBack
+        X_train, y_train = X_all[:train_sequence_len], y_all[:train_sequence_len]
+        X_val, y_val = X_all[train_sequence_len:], y_all[train_sequence_len:]
+
+       
         train_ds = TensorDataset(torch.from_numpy(X_train), torch.from_numpy(y_train).unsqueeze(1))
         val_ds = TensorDataset(torch.from_numpy(X_val), torch.from_numpy(y_val).unsqueeze(1))
 
-        train_loader = DataLoader(train_ds, batch_size=32, shuffle=False) # Chronological order preserved
+        train_loader = DataLoader(train_ds, batch_size=32, shuffle=False) 
         val_loader = DataLoader(val_ds, batch_size=32, shuffle=False)
 
         self.reg_net = _LSTMNet(
@@ -94,7 +98,6 @@ class LSTMmodel:
 
         reg_optimizer = torch.optim.AdamW(self.reg_net.parameters(), lr=0.002, weight_decay=1e-4)
         reg_scheduler = torch.optim.lr_scheduler.ReduceLROnPlateau(reg_optimizer, mode='min', patience=3, factor=0.5)
-
         reg_loss_fn = nn.HuberLoss(delta=1.0)  
         
         best_val_loss = float("inf")
@@ -122,7 +125,6 @@ class LSTMmodel:
 
             avg_train_loss = train_loss / len(train_loader)
             avg_val_loss = val_loss / len(val_loader)
-
             reg_scheduler.step(avg_val_loss)
             
             if avg_val_loss < best_val_loss:
@@ -142,7 +144,6 @@ class LSTMmodel:
 
         reg_df_clean = reg_df.dropna().copy()
         
-       
         reg_features_scaled = self.reg_feature_scaler.transform(reg_df_clean[self.reg_df_columns].values)
         reg_targets_raw = reg_df_clean[self.target_col].values
 
@@ -154,7 +155,6 @@ class LSTMmodel:
          
         reg_idx = reg_df_clean.index[self.lookBack :]
 
-       
         historical_vol = reg_df_clean['target_vol'].iloc[self.lookBack:].values
         reg_preds_returns = reg_preds * historical_vol
 
@@ -167,39 +167,48 @@ class LSTMmodel:
         y_true_series = pd.Series(actual_percentage_returns, index=reg_idx, name="actual_return")
         y_pred_series = pd.Series(reg_preds_returns, index=reg_idx, name="pred_return")
 
-        close_t = reg_df_clean["Close"].reindex(reg_idx)
-        future_close_actual = close_t * (1 + y_true_series)
-        close_pred = close_t * (1 + y_pred_series)
-
        
         baseline_mae = mean_absolute_error(actual_percentage_returns, np.zeros_like(actual_percentage_returns))
+        self.mae = mean_absolute_error(actual_percentage_returns, reg_preds_returns)
+        self.baseline_mae = baseline_mae
+        self.r2 = r2_score(actual_percentage_returns, reg_preds_returns)
+        
         print("=============== LSTM OOS EVALUATION METRICS ===============")
-        print(f"MAE : {mean_absolute_error(actual_percentage_returns, reg_preds_returns):.6f}  (naive-zero baseline: {baseline_mae:.6f})")
-        print(f"Return R2 Score : {r2_score(actual_percentage_returns, reg_preds_returns):.6f}")
+        print(f"MAE : {self.mae:.6f}  (naive-zero baseline: {self.baseline_mae:.6f})")
+        print(f"Return R2 Score : {self.r2:.6f}")
         
         direction_acc = np.mean(np.sign(reg_y) == np.sign(reg_preds))
-        print(f"Directional Accuracy    : {direction_acc * 100:.2f}%")
+        self.win_rate = direction_acc * 100
+        print(f"Directional Accuracy    : {self.win_rate:.2f}%")
         print("===========================================================")
 
-        # Dark theme plot execution
-        plt.style.use("dark_background")
-        plt.figure(figsize=(12, 5))
-        plt.plot(y_true_series, label="Actual Return", color="mediumseagreen", )
-        plt.plot(y_pred_series, label="Predicted Return", color="gold", alpha=0.9)
-        plt.title("LSTM Out-Of-Sample Returns Realization Profile")
-        plt.legend()
-        plt.show()
+        strategy_returns = np.sign(reg_preds_returns) * actual_percentage_returns
+        trading_days = 252
+        daily_rf = 0.065 / trading_days
+
+        excess_returns = strategy_returns - daily_rf
+        mean_excess = np.mean(excess_returns)
+        std_excess = np.std(excess_returns)
+        self.sharpe_ratio = (
+            (mean_excess / std_excess) * np.sqrt(trading_days)
+            if std_excess > 0
+            else 0.0
+        )
 
         return pd.Series(reg_preds_returns, index=reg_idx, name="lstm_pred_regression")
 
-    def forecast(self, reg_df: pd.DataFrame) -> None:
+    def forecast(self, reg_df: pd.DataFrame) -> dict:
         if self.reg_net is None:
             raise RuntimeError("Call train() before forecast()!")
 
-        reg_df_clean = reg_df.dropna().copy()
-        reg_features_scaled = self.reg_feature_scaler.transform(reg_df_clean[self.reg_df_columns].values)
+    
+        reg_df_clean = reg_df.copy()
+        if self.target_col in reg_df_clean.columns:
+            reg_df_clean = reg_df_clean.drop(columns=[self.target_col])
+        
+        reg_df_clean = reg_df_clean.dropna()
 
-       
+        reg_features_scaled = self.reg_feature_scaler.transform(reg_df_clean[self.reg_df_columns].values)
         reg_last_window = reg_features_scaled[-self.lookBack :]
 
         self.reg_net.eval()
@@ -209,17 +218,32 @@ class LSTMmodel:
 
         current_vol = float(reg_df_clean["target_vol"].iloc[-1])
         unscaled_percentage_return = raw_scaled_forecast * current_vol
-
-
         reg_pred_return = np.clip(unscaled_percentage_return, -0.05, 0.05)
 
         last_date = reg_df_clean.index[-1]
         last_close = float(reg_df_clean["Close"].iloc[-1])
-        next_day = (last_date + pd.offsets.BusinessDay(1)).strftime("%Y-%m-%d")
-
+        
+        # Safe datetime formatting parser
+        last_date_dt = pd.to_datetime(last_date) if isinstance(last_date, str) else last_date
+        next_day = (last_date_dt + pd.offsets.BusinessDay(1)).strftime("%Y-%m-%d")
+        estimated_close = last_close * (1 + reg_pred_return)
+        
         print("\n=============== LSTM FUTURE INFERENCE HORIZON ===============")
-        print(f"Last Reference Processing Date : {last_date.date()}")
+        print(f"Last Reference Processing Date : {last_date_dt.date()}")
         print(f"Forecast Target Horizon Execution : {next_day}")
         print(f"Predicted Return Vector           : {reg_pred_return * 100:+.4f}%")
-        print(f"Last Observed Close : {last_close:.2f} -> Estimated Target Close: {last_close * (1 + reg_pred_return):.2f}")
+        print(f"Last Observed Close : {last_close:.2f} -> Estimated Target Close: {estimated_close:.2f}")
         print("=============================================================")
+
+        return {
+            'model': 'LSTM',
+            'r2_score': self.r2,
+            'last_date': last_date_dt.strftime("%Y-%m-%dT%H:%M:%S"),
+            'last_close': last_close,   
+            'prediction': reg_pred_return,
+            'est_close': estimated_close,
+            'mae': self.mae,
+            'baseline_mae': self.baseline_mae,
+            'sharpe_ratio': self.sharpe_ratio,
+            'win_rate': self.win_rate
+        }

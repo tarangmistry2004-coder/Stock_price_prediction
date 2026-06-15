@@ -120,9 +120,9 @@ def get_nifty_data():
     processed_df = processed_df.sort_values(by=['Ticker', 'Date']).reset_index(drop=True)
     processed_df['TimeIndex'] = processed_df.groupby('Ticker').cumcount()
     
-    print(f"Dataset Size: {processed_df.shape}")
-    print(f'top 5 row : {processed_df.head()}')
-    print(f'columns : {processed_df.columns}')
+    # print(f"Dataset Size: {processed_df.shape}")
+    # print(f'top 5 row : {processed_df.head()}')
+    # print(f'columns : {processed_df.columns}')
     
 
     processed_df.to_csv("nifty50_processed.csv", index=False)
@@ -130,5 +130,3 @@ def get_nifty_data():
     return processed_df
 
 # get_nifty_data()
-
-

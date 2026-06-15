@@ -18,6 +18,11 @@ class XGBoostModel:
         self.target_col = "target"
         self.engineered_feature_cols = None
 
+        self.r2 = None
+        self.mae = None
+        self.sharpe_ratio = None
+        self.baseline_mae = None
+        self.win_rate = None
     def _prepare_aggregated_features(self, df_features: pd.DataFrame, lookback: int = 20 ):
         df_features = df_features.copy()
         aggregated_features = pd.DataFrame(index=df_features.index)
@@ -90,14 +95,13 @@ class XGBoostModel:
     
 
     def compute_institutional_metrics(self,actual_ret: np.ndarray, pred_ret: np.ndarray, benchmark_ret: np.ndarray) -> dict:
-        # Annualized trading days multiplier
+       
         trading_days = 252
 
         # Risk-free rate fallback (6.5% standard Indian 91-day Treasury Bill yield)
         daily_rf = 0.065 / trading_days
 
         #  SHARPE RATIO CALCULATIONS
-        # Strategy returns assume we execute long or short matching the predicted sign
         strategy_returns = np.sign(pred_ret) * actual_ret
 
         excess_returns = strategy_returns - daily_rf
@@ -167,7 +171,7 @@ class XGBoostModel:
         self.reg_model.fit(reg_x, reg_y )
 
         xgb.plot_importance(self.reg_model, max_num_features=25)
-        plt.show()
+        # plt.show()
         print("Training successfully completed!\n")
 
     def predict(self, reg_df: pd.DataFrame) -> pd.Series:
@@ -195,10 +199,6 @@ class XGBoostModel:
         # reg_preds = np.clip(reg_preds,-0.0015 , 0.0015)
 
         # actual_percentage_returns = reg_df['Return_1d'].reindex(reg_idx).values
-
-
-
-
 
         pred_zscores = self.reg_model.predict(reg_x)
         pred_zscores = self.reg_target_scaler.inverse_transform(pred_zscores.reshape(-1,1)).flatten()
@@ -265,11 +265,11 @@ class XGBoostModel:
         )
 
         print(f"\n" + "="*15 + f" {type(self).__name__} OOS METRICS " + "="*15)
-        print(f"  Return R2 Score               : {r2_score(actual_percentage_returns, reg_preds):.6f}")
-        print(f"  Annualized Sharpe Ratio       : {metrics['Annualized Sharpe Ratio']:.4f}")
-        print(f"  Annualized Information Ratio  : {metrics['Annualized Information Ratio']:.4f}")
-        print(f"  Out-of-Sample Win Rate        : {metrics['Out-of-Sample Win Rate']:.2f}%")
-        print(f"  System Profit Factor          : {metrics['System Profit Factor']:.4f}")
+        print(f"Return R2 Score : {r2_score(actual_percentage_returns, reg_preds):.6f}")
+        print(f"Annualized Sharpe Ratio  : {metrics['Annualized Sharpe Ratio']:.4f}")
+        print(f"Annualized Information Ratio : {metrics['Annualized Information Ratio']:.4f}")
+        print(f"Out-of-Sample Win Rate  : {metrics['Out-of-Sample Win Rate']:.2f}%")
+        print(f"System Profit Factor : {metrics['System Profit Factor']:.4f}")
         print("=" * 55 + "\n")
 
         plt.style.use("dark_background")
@@ -278,9 +278,12 @@ class XGBoostModel:
         plt.legend()
         plt.plot(reg_preds, label="predicted return", color="yellow",)
         plt.legend()
-        plt.show()
-
-
+        # plt.show()
+        self.r2 = r2_score(actual_percentage_returns, reg_preds)
+        self.sharpe_ratio  = metrics['Annualized Information Ratio']
+        self.mae = mean_absolute_error(actual_percentage_returns, reg_preds)
+        self.baseline_mae = baseline_mae
+        self.win_rate = metrics['Out-of-Sample Win Rate']
         return pd.Series(reg_preds, index=reg_idx, name="xgb_pred_regression")
 
 
@@ -312,9 +315,20 @@ class XGBoostModel:
         last_close = float(reg_df["Close"].iloc[-1])
         estimated_close = last_close * (1 + reg_pred_return)
 
-        print(f"\nFORECAST")
-        print(f"Last Reference Processing Date : {last_date}")
-        print(f"Predicted Return Execution Vector : {reg_pred_return * 100:+.4f}%")
-        print(f"Last Observed Close : {last_close:.2f} -> Estimated Target Close: {estimated_close:.2f}")
+        # print(f"\nFORECAST")
+        # print(f"Last Reference Processing Date : {last_date}")
+        # print(f"Predicted Return Execution Vector : {reg_pred_return * 100:+.4f}%")
+        # print(f"Last Observed Close : {last_close:.2f} -> Estimated Target Close: {estimated_close:.2f}")
 
-        return reg_pred_return
+        return {
+        'model': 'XGBoost',
+        'r2_score': self.r2,
+        'last_date' : last_date ,
+        'last_close' : last_close,   
+        'prediction':reg_pred_return,
+        'est_close' : estimated_close,
+        'mae' : self.mae,
+        'baseline_mae' : self.baseline_mae,
+        'sharpe_ratio' : self.sharpe_ratio,
+        'win_rate' : self.win_rate
+        }

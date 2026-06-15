@@ -91,7 +91,7 @@ def plot_charts(stats, model_name="Machine Learning Model"):
     else:
         axes[2].text(0.5, 0.5, 'No trades executed to display distribution.', ha='center', va='center')
 
-    plt.show()
+    # plt.show()
 
 
 

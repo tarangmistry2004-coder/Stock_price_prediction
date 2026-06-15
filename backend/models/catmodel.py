@@ -5,7 +5,6 @@ import numpy as np
 import pandas as pd
 from sklearn.metrics import mean_absolute_error, r2_score
 from sklearn.preprocessing import MinMaxScaler
-
 class CatBoostModel:
 
     def __init__(self):
@@ -15,6 +14,12 @@ class CatBoostModel:
         self.reg_target_scaler = MinMaxScaler(feature_range=(-100,100))
         self.target_col = "target"
         self.engineered_feature_cols = None
+
+        self.r2 = None
+        self.mae = None
+        self.sharpe_ratio = None
+        self.baseline_mae = None
+        self.win_rate = None
 
     def _prepare_aggregated_features(self, df_features: pd.DataFrame, lookback: int = 20):
         df_features = df_features.copy()
@@ -216,8 +221,13 @@ class CatBoostModel:
         plt.plot(reg_preds, label="predicted return", color="yellow")
         plt.title("CatBoost Out-of-Sample Return Waves")
         plt.legend()
-        plt.show()
+        # plt.show()
 
+        self.r2 = r2_score(actual_percentage_returns, reg_preds)
+        self.sharpe_ratio  = metrics['Annualized Information Ratio']
+        self.mae = mean_absolute_error(actual_percentage_returns, reg_preds)
+        self.baseline_mae = baseline_mae
+        self.win_rate = metrics['Out-of-Sample Win Rate']
         return pd.Series(reg_preds, index=reg_idx, name="cat_pred_regression")
 
     def forecast(self, test_df: pd.DataFrame) -> float:
@@ -239,9 +249,20 @@ class CatBoostModel:
         last_close = test_df["Close"].iloc[-1]
         estimated_close = last_close * (1 + reg_pred_return)
 
-        print(f"\nCATBOOST FORECAST")
-        print(f"Last Reference Processing Date : {last_date}")
-        print(f"Predicted Return Execution Vector : {reg_pred_return * 100:.4f}%")
-        print(f"Last Observed Close : {last_close:.2f} -> Estimated Target Close: {estimated_close:.2f}")
+        # print(f"\nCATBOOST FORECAST")
+        # print(f"Last Reference Processing Date : {last_date}")
+        # print(f"Predicted Return Execution Vector : {reg_pred_return * 100:.4f}%")
+        # print(f"Last Observed Close : {last_close:.2f} -> Estimated Target Close: {estimated_close:.2f}")
 
-        return reg_pred_return
+        return  {
+        'model': 'CatBoost',
+        'r2_score' : self.r2,
+        'last_date' : last_date ,
+        'last_close' : last_close,   
+        'prediction':reg_pred_return,
+        'est_close' : estimated_close,
+        'mae' : self.mae,
+        'baseline_mae' : self.baseline_mae,
+        'sharpe_ratio' : self.sharpe_ratio,
+        'win_rate' : self.win_rate
+        }
